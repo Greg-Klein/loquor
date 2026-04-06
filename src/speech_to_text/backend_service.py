@@ -36,6 +36,9 @@ class BackendService:
             return {"ok": True, "devices": list_input_devices()}
         if command == "configure":
             return self.configure(payload)
+        if command == "preload_model":
+            self.transcriber.preload_model(self.emit_progress)
+            return {"ok": True, "ready": True}
         if command == "begin_recording":
             self.recorder.begin_recording()
             return {"ok": True}
@@ -66,6 +69,10 @@ class BackendService:
             return {"ok": True, "text": "", "empty": True}
         text = self.transcriber.transcribe_audio(audio, sample_rate=self.state.sample_rate)
         return {"ok": True, "text": text, "empty": False}
+
+    def emit_progress(self, payload: dict[str, Any]) -> None:
+        sys.stdout.write(json.dumps({"event": "preload_progress", **payload}, ensure_ascii=True) + "\n")
+        sys.stdout.flush()
 
 
 def write_response(request_id: Any, response: dict[str, Any]) -> None:

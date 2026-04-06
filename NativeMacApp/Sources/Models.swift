@@ -71,6 +71,16 @@ struct ConfigureResponse: Decodable {
     let state: BackendStateResponse
 }
 
+struct PreloadModelResponse: Decodable {
+    let ready: Bool
+}
+
+struct PreloadProgressEvent {
+    let stage: String
+    let message: String
+    let percent: Int?
+}
+
 struct EndRecordingResponse: Decodable {
     let text: String
     let empty: Bool

@@ -86,8 +86,138 @@ class TranscriptionService:
 
         if self._model is None:
             print(f"Loading model: {self.model_name}")
-            self._model = from_pretrained(self.model_name)
+            model_path = self._prepare_model_files()
+            self._model = from_pretrained(str(model_path))
         return self._model
+
+    def preload_model(self, progress_callback: Callable[[dict[str, object]], None] | None = None) -> None:
+        with self._lock:
+            model_path = self._prepare_model_files(progress_callback)
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "stage": "loading",
+                        "message": "Loading model...",
+                    }
+                )
+
+            from parakeet_mlx import from_pretrained
+
+            if self._model is None:
+                print(f"Loading model: {self.model_name}")
+                self._model = from_pretrained(str(model_path))
+
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "stage": "ready",
+                        "message": "Model ready",
+                        "percent": 100,
+                    }
+                )
+
+    def _prepare_model_files(
+        self, progress_callback: Callable[[dict[str, object]], None] | None = None
+    ) -> Path:
+        from huggingface_hub import hf_hub_download
+
+        model_dir = self._local_model_dir()
+        config_path = model_dir / "config.json"
+        weights_path = model_dir / "model.safetensors"
+
+        if config_path.exists() and weights_path.exists():
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "stage": "cached",
+                        "message": "Using cached model...",
+                    }
+                )
+            return model_dir
+
+        model_dir.mkdir(parents=True, exist_ok=True)
+        files = ["config.json", "model.safetensors"]
+        dry_run_infos = [
+            hf_hub_download(
+                self.model_name,
+                filename,
+                local_dir=model_dir,
+                dry_run=True,
+            )
+            for filename in files
+        ]
+        total_bytes = sum(info.file_size for info in dry_run_infos if info.will_download)
+
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "stage": "downloading",
+                    "message": "Downloading model...",
+                    "percent": 0 if total_bytes > 0 else 100,
+                }
+            )
+
+        downloaded_bytes = 0
+
+        class ProgressReporter:
+            def __init__(
+                self,
+                *,
+                total: int | None = None,
+                initial: int = 0,
+                desc: str | None = None,
+                **_: object,
+            ) -> None:
+                self.total = total or 0
+                self.current = initial
+                self.desc = desc or ""
+
+            def __enter__(self) -> "ProgressReporter":
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+            def update(self, amount: int) -> None:
+                nonlocal downloaded_bytes
+                self.current += amount
+                downloaded_bytes += amount
+                if progress_callback is None or total_bytes <= 0:
+                    return
+                percent = min(99, int((downloaded_bytes / total_bytes) * 100))
+                progress_callback(
+                    {
+                        "stage": "downloading",
+                        "message": f"Downloading model... {percent}%",
+                        "percent": percent,
+                    }
+                )
+
+            def close(self) -> None:
+                return None
+
+        for filename in files:
+            hf_hub_download(
+                self.model_name,
+                filename,
+                local_dir=model_dir,
+                tqdm_class=ProgressReporter,
+            )
+
+        if progress_callback is not None and total_bytes > 0:
+            progress_callback(
+                {
+                    "stage": "downloading",
+                    "message": "Downloading model... 100%",
+                    "percent": 100,
+                }
+            )
+
+        return model_dir
+
+    def _local_model_dir(self) -> Path:
+        safe_model_name = self.model_name.replace("/", "--")
+        return Path.home() / "Library" / "Caches" / "Loquor" / "models" / safe_model_name
 
     def transcribe_audio(self, audio: np.ndarray, sample_rate: int, keep_audio: bool = False) -> str:
         with self._lock:

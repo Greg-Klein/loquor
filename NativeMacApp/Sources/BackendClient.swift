@@ -21,6 +21,8 @@ enum BackendError: Error, LocalizedError {
 }
 
 final class BackendClient: @unchecked Sendable {
+    var onPreloadProgress: ((PreloadProgressEvent) -> Void)?
+
     private let decoder = JSONDecoder()
     private let process = Process()
     private let inputPipe = Pipe()
@@ -97,6 +99,10 @@ final class BackendClient: @unchecked Sendable {
         let _: Empty = try await send(command: "begin_recording", body: [:], as: Empty.self)
     }
 
+    func preloadModel() async throws {
+        let _: PreloadModelResponse = try await send(command: "preload_model", body: [:], as: PreloadModelResponse.self)
+    }
+
     func endRecording() async throws -> EndRecordingResponse {
         try await send(command: "end_recording", body: [:], as: EndRecordingResponse.self)
     }
@@ -140,6 +146,20 @@ final class BackendClient: @unchecked Sendable {
     }
 
     private func resolveLine(_ data: Data) {
+        if
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let event = root["event"] as? String,
+            event == "preload_progress"
+        {
+            let progress = PreloadProgressEvent(
+                stage: (root["stage"] as? String) ?? "unknown",
+                message: (root["message"] as? String) ?? "Preparing model...",
+                percent: root["percent"] as? Int
+            )
+            onPreloadProgress?(progress)
+            return
+        }
+
         guard
             let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let id = root["id"] as? String,

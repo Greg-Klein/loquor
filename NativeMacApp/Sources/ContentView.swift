@@ -33,7 +33,27 @@ struct ContentView: View {
                                 appState.requestHotkeyCapture()
                             }
                             .buttonStyle(.borderedProminent)
-                            .disabled(appState.isCapturingHotkey)
+                            .disabled(appState.isCapturingHotkey || appState.isPreloadingModel)
+
+                            if appState.isPreloadingModel {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    if let percent = appState.preloadProgressPercent {
+                                        ProgressView(value: Double(percent), total: 100)
+                                            .controlSize(.small)
+                                        Text("Downloading or loading Parakeet: \(percent)%")
+                                            .font(.footnote)
+                                            .foregroundStyle(.secondary)
+                                    } else {
+                                        HStack(spacing: 10) {
+                                            ProgressView()
+                                                .controlSize(.small)
+                                            Text("Downloading or loading Parakeet. This can take a moment on first launch.")
+                                                .font(.footnote)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -199,12 +219,31 @@ struct ContentView: View {
 
                 Spacer()
 
-                Text(appState.statusText)
-                    .font(.caption.weight(.semibold))
+                if appState.isPreloadingModel {
+                    HStack(spacing: 8) {
+                        if let percent = appState.preloadProgressPercent {
+                            ProgressView(value: Double(percent), total: 100)
+                                .frame(width: 54)
+                                .controlSize(.small)
+                        } else {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                        Text(appState.statusText)
+                            .font(.caption.weight(.semibold))
+                    }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background(statusColor.opacity(0.14), in: Capsule())
                     .foregroundStyle(statusColor)
+                } else {
+                    Text(appState.statusText)
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(statusColor.opacity(0.14), in: Capsule())
+                        .foregroundStyle(statusColor)
+                }
             }
         }
         .padding(.horizontal, 18)

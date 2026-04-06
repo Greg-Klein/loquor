@@ -11,6 +11,8 @@ final class AppState: ObservableObject {
     @Published var pushToTalkBinding: PushToTalkBinding
     @Published var pasteIntoActiveField: Bool
     @Published var launchAtLogin: Bool
+    @Published var isPreloadingModel = false
+    @Published var preloadProgressPercent: Int?
     @Published var statusText = "Starting..."
     @Published var lastTranscript = ""
     @Published var isCapturingHotkey = false
@@ -55,6 +57,12 @@ final class AppState: ObservableObject {
         hotkeyMonitor.onCapture = { [weak self] binding in
             self?.applyCapturedHotkey(binding: binding)
         }
+        backend.onPreloadProgress = { [weak self] progress in
+            Task { @MainActor in
+                self?.statusText = progress.message
+                self?.preloadProgressPercent = progress.percent
+            }
+        }
         hotkeyMonitor.updateHotkey(binding: pushToTalkBinding)
         hotkeyMonitor.start()
         Task {
@@ -68,13 +76,21 @@ final class AppState: ObservableObject {
         refreshAccessibilityPermission()
         syncLaunchAtLoginPreference()
         do {
+            isPreloadingModel = true
+            preloadProgressPercent = nil
             try backend.start()
             _ = try await backend.ping()
             try await configureBackendWithFallback()
             devices = try await backend.listDevices()
+            statusText = "Preparing model..."
+            try await backend.preloadModel()
+            isPreloadingModel = false
+            preloadProgressPercent = nil
             backendError = nil
             statusText = "Ready"
         } catch {
+            isPreloadingModel = false
+            preloadProgressPercent = nil
             backendError = error.localizedDescription
             statusText = "Backend error"
         }
@@ -153,6 +169,10 @@ final class AppState: ObservableObject {
 
     private func beginRecording() async {
         guard !isTranscribing else { return }
+        guard !isPreloadingModel else {
+            statusText = "Preparing model..."
+            return
+        }
         captureTargetApplication()
         do {
             try await backend.beginRecording()
