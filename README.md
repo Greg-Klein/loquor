@@ -1,4 +1,42 @@
-# Speech-to-text local avec Parakeet
+# Loquor
+
+Loquor est une app macOS de dictée locale avec push-to-talk, transcription Parakeet en local, choix du micro et insertion automatique dans le champ actif.
+
+## Download
+
+Télécharger la dernière version depuis les releases :
+
+- 📦 [Latest release](https://github.com/Greg-Klein/loquor/releases/latest)
+
+## 🚀 Installer l'app macOS
+
+1. Télécharger `Loquor-macOS.zip` depuis la dernière release.
+2. Décompresser l’archive.
+3. Déplacer `Loquor.app` dans `/Applications`.
+4. Lancer `Loquor`.
+
+Si macOS indique que l’app est modifiée ou endommagée, lancer :
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Loquor.app
+```
+
+Puis relancer `Loquor`.
+
+## 🔐 Permissions macOS
+
+Loquor peut demander :
+
+- 🎙️ `Microphone`, pour capturer ta voix
+- ⌨️ `Accessibility`, pour insérer le texte généré dans le champ actuellement focalisé
+
+## ✨ Notes d’usage
+
+- 🖥️ Loquor tourne localement sur macOS.
+- 📍 L’app vit dans la barre de menu.
+- 📋 Si aucun champ texte n’a le focus, le texte reste disponible via le presse-papiers.
+
+## 🛠️ Développement
 
 Cette base propose maintenant :
 
