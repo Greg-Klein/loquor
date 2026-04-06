@@ -31,6 +31,33 @@ def list_input_devices() -> list[dict[str, object]]:
     return devices
 
 
+def default_input_device() -> int | None:
+    default_device = sd.default.device
+
+    if hasattr(default_device, "input"):
+        input_device = getattr(default_device, "input")
+    elif isinstance(default_device, (list, tuple)):
+        input_device = default_device[0]
+    else:
+        try:
+            input_device = default_device[0]
+        except Exception:
+            input_device = default_device
+
+    if input_device is None:
+        return None
+
+    input_device = int(input_device)
+    return None if input_device < 0 else input_device
+
+
+def input_device_info(device: int | None) -> dict[str, object]:
+    query_target = device if device is not None else default_input_device()
+    if query_target is None:
+        return {}
+    return dict(sd.query_devices(query_target))
+
+
 def key_to_id(key: KeyType) -> str | None:
     if key is None:
         return None
@@ -264,6 +291,8 @@ class PushToTalkRecorder:
     def __init__(self, sample_rate: int, device: int | None) -> None:
         self.sample_rate = sample_rate
         self.device = device
+        self._resolved_device: int | None = None
+        self._active_sample_rate = sample_rate
         self._lock = threading.Lock()
         self._segments: list[np.ndarray] = []
         self._recording = False
@@ -271,13 +300,34 @@ class PushToTalkRecorder:
         self.stream: sd.InputStream | None = None
 
     def _create_stream(self) -> sd.InputStream:
-        return sd.InputStream(
-            samplerate=self.sample_rate,
-            channels=1,
-            dtype="float32",
-            device=self.device,
-            callback=self._on_audio,
-        )
+        self._resolved_device = self.device if self.device is not None else default_input_device()
+        requested_sample_rate = self.sample_rate
+
+        try:
+            stream = sd.InputStream(
+                samplerate=requested_sample_rate,
+                channels=1,
+                dtype="float32",
+                device=self._resolved_device,
+                callback=self._on_audio,
+            )
+            self._active_sample_rate = requested_sample_rate
+            return stream
+        except Exception:
+            device_info = input_device_info(self._resolved_device)
+            fallback_sample_rate = int(device_info.get("default_samplerate", requested_sample_rate))
+            if fallback_sample_rate == requested_sample_rate:
+                raise
+
+            stream = sd.InputStream(
+                samplerate=fallback_sample_rate,
+                channels=1,
+                dtype="float32",
+                device=self._resolved_device,
+                callback=self._on_audio,
+            )
+            self._active_sample_rate = fallback_sample_rate
+            return stream
 
     def _on_audio(self, indata, frames, time_info, status) -> None:
         del frames, time_info
@@ -298,12 +348,15 @@ class PushToTalkRecorder:
         self.stream.stop()
         self.stream.close()
         self.stream = None
+        self._resolved_device = None
+        self._active_sample_rate = self.sample_rate
 
     def reconfigure(self, sample_rate: int, device: int | None) -> None:
         was_recording = self._recording
         self.close()
         self.sample_rate = sample_rate
         self.device = device
+        self._resolved_device = None
         self._segments = []
         self._recording = False
         self._closed = False
@@ -322,18 +375,21 @@ class PushToTalkRecorder:
                 return
             if self._closed:
                 raise RuntimeError("Recorder is closed.")
+            if self.device is None:
+                self._resolved_device = default_input_device()
             self._segments = []
             self._ensure_stream_started()
             self._recording = True
         print("Recording... release the push-to-talk key to transcribe.")
 
-    def finish_recording(self) -> np.ndarray | None:
+    def finish_recording(self) -> tuple[np.ndarray, int] | None:
         with self._lock:
             if not self._recording:
                 return None
             self._recording = False
             segments = self._segments
             self._segments = []
+            sample_rate = self._active_sample_rate
             self._stop_stream()
 
         if not segments:
@@ -341,7 +397,7 @@ class PushToTalkRecorder:
             return None
 
         print("Recording complete.")
-        return np.concatenate(segments, axis=0)
+        return np.concatenate(segments, axis=0), sample_rate
 
 
 class GlobalHotkeyManager:

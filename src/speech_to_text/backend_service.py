@@ -64,10 +64,11 @@ class BackendService:
         return {"ok": True, "state": asdict(self.state)}
 
     def end_recording(self) -> dict[str, Any]:
-        audio = self.recorder.finish_recording()
-        if audio is None:
+        recording = self.recorder.finish_recording()
+        if recording is None:
             return {"ok": True, "text": "", "empty": True}
-        text = self.transcriber.transcribe_audio(audio, sample_rate=self.state.sample_rate)
+        audio, sample_rate = recording
+        text = self.transcriber.transcribe_audio(audio, sample_rate=sample_rate)
         return {"ok": True, "text": text, "empty": False}
 
     def emit_progress(self, payload: dict[str, Any]) -> None:

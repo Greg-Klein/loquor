@@ -92,17 +92,18 @@ class SpeechToTextMenuBarApp(rumps.App):
         self.recorder.begin_recording()
 
     def _stop_recording(self) -> None:
-        audio = self.recorder.finish_recording()
-        if audio is None:
+        recording = self.recorder.finish_recording()
+        if recording is None:
             self._set_status("Ready")
             return
+        audio, sample_rate = recording
         self.is_transcribing = True
         self._set_status("Transcribing")
-        threading.Thread(target=self._transcribe_and_output, args=(audio,), daemon=True).start()
+        threading.Thread(target=self._transcribe_and_output, args=(audio, sample_rate), daemon=True).start()
 
-    def _transcribe_and_output(self, audio) -> None:
+    def _transcribe_and_output(self, audio, sample_rate: int) -> None:
         try:
-            text = self.transcriber.transcribe_audio(audio, self.config.sample_rate)
+            text = self.transcriber.transcribe_audio(audio, sample_rate)
             if text:
                 copy_and_paste(text, should_paste=self.config.paste_into_active_app)
                 self._set_status("Copied to clipboard")
