@@ -181,6 +181,7 @@ final class BackendClient: @unchecked Sendable {
             let bundledBackendRoot = bundleResources.appending(path: "backend")
             if FileManager.default.fileExists(atPath: bundledPython.path) {
                 var environment = ProcessInfo.processInfo.environment
+                environment = enrichEnvironment(environment)
                 let backendSrc = bundledBackendRoot.appending(path: "src").path
                 environment["PYTHONPATH"] = backendSrc
                 return RuntimeConfiguration(
@@ -194,6 +195,7 @@ final class BackendClient: @unchecked Sendable {
 
         let repoRoot = repoRoot()
         var environment = ProcessInfo.processInfo.environment
+        environment = enrichEnvironment(environment)
         environment["PYTHONPATH"] = repoRoot.appending(path: "src").path
         return RuntimeConfiguration(
             pythonPath: repoRoot.appending(path: ".venv/bin/python"),
@@ -209,6 +211,31 @@ final class BackendClient: @unchecked Sendable {
             return cwd
         }
         return URL(fileURLWithPath: "/Users/gregoryklein/workspace/speech-to-text")
+    }
+
+    private static func enrichEnvironment(_ environment: [String: String]) -> [String: String] {
+        var environment = environment
+        let fallbackPaths = [
+            "/opt/homebrew/bin",
+            "/opt/homebrew/sbin",
+            "/usr/local/bin",
+            "/usr/local/sbin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ]
+
+        let existing = environment["PATH"] ?? ""
+        let segments = existing.split(separator: ":").map(String.init)
+        var merged: [String] = []
+        for path in fallbackPaths + segments {
+            if !merged.contains(path) {
+                merged.append(path)
+            }
+        }
+        environment["PATH"] = merged.joined(separator: ":")
+        return environment
     }
 }
 

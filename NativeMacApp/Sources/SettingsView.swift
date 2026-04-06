@@ -14,9 +14,12 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                SettingsCard(title: "Push-to-talk", systemImage: "keyboard") {
+                SettingsCard(title: "Push-to-talk", systemImage: appState.pushToTalkBinding.kind == .mouse ? "computermouse" : "keyboard") {
                     LabeledContent("Current shortcut", value: appState.hotkeyLabel())
-                    Button(appState.isCapturingHotkey ? "Press any key..." : "Change shortcut") {
+                    Text("You can use a keyboard shortcut or a mouse button.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Button(appState.isCapturingHotkey ? "Press any key or mouse button..." : "Change shortcut") {
                         appState.requestHotkeyCapture()
                     }
                     .buttonStyle(.borderedProminent)
@@ -49,6 +52,11 @@ struct SettingsView: View {
                         set: { _ in appState.togglePaste() }
                     ))
 
+                    Toggle("Start Loquor at login", isOn: Binding(
+                        get: { appState.launchAtLogin },
+                        set: { appState.setLaunchAtLogin($0) }
+                    ))
+
                     Toggle("Show diagnostics panels", isOn: Binding(
                         get: { appState.showDiagnostics },
                         set: { _ in appState.toggleDiagnosticsVisibility() }
@@ -73,6 +81,11 @@ struct SettingsView: View {
                     }
                     if appState.showDiagnostics, let backendError = appState.backendError {
                         Text(backendError)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+                    if appState.showDiagnostics, let loginItemError = appState.loginItemError {
+                        Text(loginItemError)
                             .font(.footnote)
                             .foregroundStyle(.red)
                     }

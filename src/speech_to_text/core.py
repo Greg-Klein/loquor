@@ -138,7 +138,7 @@ class PushToTalkRecorder:
         self._segments: list[np.ndarray] = []
         self._recording = False
         self._closed = False
-        self.stream = self._create_stream()
+        self.stream: sd.InputStream | None = None
 
     def _create_stream(self) -> sd.InputStream:
         return sd.InputStream(
@@ -157,8 +157,17 @@ class PushToTalkRecorder:
             if self._recording:
                 self._segments.append(indata.copy())
 
-    def start(self) -> None:
+    def _ensure_stream_started(self) -> None:
+        if self.stream is None:
+            self.stream = self._create_stream()
         self.stream.start()
+
+    def _stop_stream(self) -> None:
+        if self.stream is None:
+            return
+        self.stream.stop()
+        self.stream.close()
+        self.stream = None
 
     def reconfigure(self, sample_rate: int, device: int | None) -> None:
         was_recording = self._recording
@@ -168,23 +177,23 @@ class PushToTalkRecorder:
         self._segments = []
         self._recording = False
         self._closed = False
-        self.stream = self._create_stream()
-        self.start()
         if was_recording:
             self.begin_recording()
 
     def close(self) -> None:
         if self._closed:
             return
-        self.stream.stop()
-        self.stream.close()
+        self._stop_stream()
         self._closed = True
 
     def begin_recording(self) -> None:
         with self._lock:
             if self._recording:
                 return
+            if self._closed:
+                raise RuntimeError("Recorder is closed.")
             self._segments = []
+            self._ensure_stream_started()
             self._recording = True
         print("Recording... release the push-to-talk key to transcribe.")
 
@@ -195,6 +204,7 @@ class PushToTalkRecorder:
             self._recording = False
             segments = self._segments
             self._segments = []
+            self._stop_stream()
 
         if not segments:
             print("No audio captured.")

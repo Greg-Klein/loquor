@@ -2,14 +2,15 @@ import AppKit
 import ApplicationServices
 import Combine
 import Foundation
+import ServiceManagement
 
 @MainActor
 final class AppState: ObservableObject {
     @Published var devices: [AudioDevice] = []
     @Published var selectedDeviceID: Int?
-    @Published var pushToTalkKeyCode: UInt16
-    @Published var pushToTalkModifiers: NSEvent.ModifierFlags
+    @Published var pushToTalkBinding: PushToTalkBinding
     @Published var pasteIntoActiveField: Bool
+    @Published var launchAtLogin: Bool
     @Published var statusText = "Starting..."
     @Published var lastTranscript = ""
     @Published var isCapturingHotkey = false
@@ -17,6 +18,7 @@ final class AppState: ObservableObject {
     @Published var pasteDiagnostics: String?
     @Published var showDiagnostics: Bool
     @Published var hasAccessibilityPermission: Bool
+    @Published var loginItemError: String?
 
     private let backend = BackendClient()
     private let hotkeyMonitor = HotkeyMonitor()
@@ -38,9 +40,9 @@ final class AppState: ObservableObject {
         }
 
         selectedDeviceID = settings.selectedDeviceID
-        pushToTalkKeyCode = settings.pushToTalkKeyCode
-        pushToTalkModifiers = NSEvent.ModifierFlags(rawValue: settings.pushToTalkModifiersRawValue)
+        pushToTalkBinding = settings.pushToTalkBinding
         pasteIntoActiveField = settings.pasteIntoActiveField
+        launchAtLogin = settings.launchAtLogin
         showDiagnostics = settings.showDiagnostics
         hasAccessibilityPermission = AXIsProcessTrusted()
 
@@ -50,10 +52,10 @@ final class AppState: ObservableObject {
         hotkeyMonitor.onRelease = { [weak self] in
             Task { await self?.endRecording() }
         }
-        hotkeyMonitor.onCapture = { [weak self] keyCode, modifiers in
-            self?.applyCapturedHotkey(keyCode: keyCode, modifiers: modifiers)
+        hotkeyMonitor.onCapture = { [weak self] binding in
+            self?.applyCapturedHotkey(binding: binding)
         }
-        hotkeyMonitor.updateHotkey(keyCode: pushToTalkKeyCode, modifiers: pushToTalkModifiers)
+        hotkeyMonitor.updateHotkey(binding: pushToTalkBinding)
         hotkeyMonitor.start()
         Task {
             await startup()
@@ -64,6 +66,7 @@ final class AppState: ObservableObject {
         guard !hasStarted else { return }
         hasStarted = true
         refreshAccessibilityPermission()
+        syncLaunchAtLoginPreference()
         do {
             try backend.start()
             _ = try await backend.ping()
@@ -106,6 +109,21 @@ final class AppState: ObservableObject {
         statusText = "Paste setting updated"
     }
 
+    func setLaunchAtLogin(_ enabled: Bool) {
+        do {
+            try updateLaunchAtLogin(enabled)
+            launchAtLogin = enabled
+            settings.launchAtLogin = enabled
+            persist()
+            loginItemError = nil
+            statusText = enabled ? "Launch at login enabled" : "Launch at login disabled"
+        } catch {
+            launchAtLogin = settings.launchAtLogin
+            loginItemError = error.localizedDescription
+            statusText = "Launch at login update failed"
+        }
+    }
+
     func toggleDiagnosticsVisibility() {
         showDiagnostics.toggle()
         persist()
@@ -117,19 +135,18 @@ final class AppState: ObservableObject {
 
     func requestHotkeyCapture() {
         isCapturingHotkey = true
-        statusText = "Press a key for push-to-talk"
+        statusText = "Press a key or mouse button for push-to-talk"
         hotkeyMonitor.captureNextKey()
     }
 
     func hotkeyLabel() -> String {
-        HotkeyFormatter.label(for: pushToTalkKeyCode, modifiers: pushToTalkModifiers)
+        HotkeyFormatter.label(for: pushToTalkBinding)
     }
 
-    private func applyCapturedHotkey(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) {
+    private func applyCapturedHotkey(binding: PushToTalkBinding) {
         isCapturingHotkey = false
-        pushToTalkKeyCode = keyCode
-        pushToTalkModifiers = modifiers
-        hotkeyMonitor.updateHotkey(keyCode: keyCode, modifiers: modifiers)
+        pushToTalkBinding = binding
+        hotkeyMonitor.updateHotkey(binding: binding)
         persist()
         statusText = "Push-to-talk set to \(hotkeyLabel())"
     }
@@ -184,9 +201,9 @@ final class AppState: ObservableObject {
 
     private func persist() {
         settings.selectedDeviceID = selectedDeviceID
-        settings.pushToTalkKeyCode = pushToTalkKeyCode
-        settings.pushToTalkModifiersRawValue = pushToTalkModifiers.rawValue
+        settings.pushToTalkBinding = pushToTalkBinding
         settings.pasteIntoActiveField = pasteIntoActiveField
+        settings.launchAtLogin = launchAtLogin
         settings.showDiagnostics = showDiagnostics
         if let data = try? JSONEncoder().encode(settings) {
             UserDefaults.standard.set(data, forKey: defaultsKey)
@@ -233,5 +250,25 @@ final class AppState: ObservableObject {
     private func openSystemSettings(_ urlString: String) {
         guard let url = URL(string: urlString) else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    private func syncLaunchAtLoginPreference() {
+        do {
+            try updateLaunchAtLogin(settings.launchAtLogin)
+            launchAtLogin = settings.launchAtLogin
+            loginItemError = nil
+        } catch {
+            loginItemError = error.localizedDescription
+        }
+    }
+
+    private func updateLaunchAtLogin(_ enabled: Bool) throws {
+        if enabled {
+            if SMAppService.mainApp.status != .enabled {
+                try SMAppService.mainApp.register()
+            }
+        } else if SMAppService.mainApp.status == .enabled || SMAppService.mainApp.status == .requiresApproval {
+            try SMAppService.mainApp.unregister()
+        }
     }
 }

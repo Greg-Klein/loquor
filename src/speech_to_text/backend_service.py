@@ -24,7 +24,6 @@ class BackendService:
             sample_rate=self.state.sample_rate,
             device=self.state.input_device,
         )
-        self.recorder.start()
 
     def shutdown(self) -> None:
         self.recorder.close()

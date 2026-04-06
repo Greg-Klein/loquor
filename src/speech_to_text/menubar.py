@@ -40,7 +40,6 @@ class SpeechToTextMenuBarApp(rumps.App):
         self.refresh_mics_item = rumps.MenuItem("Refresh microphones", callback=self.refresh_microphones)
         self.quit_item = rumps.MenuItem("Quit", callback=self.quit_app)
         self._rebuild_menu()
-        self.recorder.start()
         self.hotkey.start()
 
     def _rebuild_menu(self) -> None:

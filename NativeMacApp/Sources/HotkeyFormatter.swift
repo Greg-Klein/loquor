@@ -1,6 +1,15 @@
 import AppKit
 
 enum HotkeyFormatter {
+    static func label(for binding: PushToTalkBinding) -> String {
+        switch binding.kind {
+        case .keyboard:
+            return label(for: binding.keyCode, modifiers: binding.modifiers)
+        case .mouse:
+            return mouseLabel(for: binding.mouseButton ?? 2)
+        }
+    }
+
     static func label(for keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> String {
         let modifierLabels = labels(for: modifiers)
         let key = keyLabel(for: keyCode)
@@ -32,6 +41,15 @@ enum HotkeyFormatter {
                 return scalar
             }
             return "Key \(keyCode)"
+        }
+    }
+
+    static func mouseLabel(for button: Int) -> String {
+        switch button {
+        case 0: return "Left Mouse Button"
+        case 1: return "Right Mouse Button"
+        case 2: return "Middle Mouse Button"
+        default: return "Mouse Button \(button + 1)"
         }
     }
 }

@@ -4,50 +4,67 @@ import AppKit
 final class HotkeyMonitor {
     var onPress: (() -> Void)?
     var onRelease: (() -> Void)?
-    var onCapture: ((UInt16, NSEvent.ModifierFlags) -> Void)?
+    var onCapture: ((PushToTalkBinding) -> Void)?
 
-    private var keyCode: UInt16 = 56
-    private var modifierFlags: NSEvent.ModifierFlags = []
+    private let keyboardEventMask: NSEvent.EventTypeMask = [.keyDown, .keyUp, .flagsChanged]
+    private let mouseEventMask: NSEvent.EventTypeMask = [
+        .leftMouseDown, .leftMouseUp,
+        .rightMouseDown, .rightMouseUp,
+        .otherMouseDown, .otherMouseUp,
+    ]
+    private var binding = PushToTalkBinding()
     private var isPressed = false
     private var isCapturing = false
-    private var globalMonitor: Any?
-    private var localMonitor: Any?
+    private var globalKeyboardMonitor: Any?
+    private var localKeyboardMonitor: Any?
+    private var globalMouseMonitor: Any?
+    private var localMouseMonitor: Any?
 
     func start() {
         stop()
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.keyDown, .keyUp, .flagsChanged],
+        globalKeyboardMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: keyboardEventMask,
             handler: { [weak self] event in
                 self?.handle(event)
             }
         )
-        localMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.keyDown, .keyUp, .flagsChanged]
+        localKeyboardMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: keyboardEventMask
         ) { [weak self] event in
             self?.handle(event)
             return event
         }
+        updateMouseMonitors()
     }
 
     func stop() {
-        if let globalMonitor {
-            NSEvent.removeMonitor(globalMonitor)
+        if let globalKeyboardMonitor {
+            NSEvent.removeMonitor(globalKeyboardMonitor)
         }
-        if let localMonitor {
-            NSEvent.removeMonitor(localMonitor)
+        if let localKeyboardMonitor {
+            NSEvent.removeMonitor(localKeyboardMonitor)
         }
-        globalMonitor = nil
-        localMonitor = nil
+        if let globalMouseMonitor {
+            NSEvent.removeMonitor(globalMouseMonitor)
+        }
+        if let localMouseMonitor {
+            NSEvent.removeMonitor(localMouseMonitor)
+        }
+        globalKeyboardMonitor = nil
+        localKeyboardMonitor = nil
+        globalMouseMonitor = nil
+        localMouseMonitor = nil
     }
 
-    func updateHotkey(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) {
-        self.keyCode = keyCode
-        self.modifierFlags = modifiers.intersection(.deviceIndependentFlagsMask)
+    func updateHotkey(binding: PushToTalkBinding) {
+        self.binding = binding
         self.isPressed = false
+        updateMouseMonitors()
     }
 
     func captureNextKey() {
         isCapturing = true
+        updateMouseMonitors()
     }
 
     private func handle(_ event: NSEvent) {
@@ -56,12 +73,17 @@ final class HotkeyMonitor {
             return
         }
 
+        if binding.kind == .mouse {
+            handleMouse(event)
+            return
+        }
+
         if event.type == .flagsChanged {
             handleFlagsChanged(event)
             return
         }
 
-        if event.keyCode != keyCode {
+        if event.keyCode != binding.keyCode {
             return
         }
 
@@ -82,22 +104,22 @@ final class HotkeyMonitor {
     }
 
     private func handleFlagsChanged(_ event: NSEvent) {
-        guard event.keyCode == keyCode else { return }
+        guard event.keyCode == binding.keyCode else { return }
         let active = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let expected = modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let expected = binding.modifiers.intersection(NSEvent.ModifierFlags.deviceIndependentFlagsMask)
 
         if expected.isEmpty {
-            if active.contains(flagForKeyCode(keyCode)) && !isPressed {
+            if active.contains(flagForKeyCode(binding.keyCode)) && !isPressed {
                 isPressed = true
                 onPress?()
-            } else if !active.contains(flagForKeyCode(keyCode)) && isPressed {
+            } else if !active.contains(flagForKeyCode(binding.keyCode)) && isPressed {
                 isPressed = false
                 onRelease?()
             }
             return
         }
 
-        let shouldBePressed = active.isSuperset(of: expected) && active.contains(flagForKeyCode(keyCode))
+        let shouldBePressed = active.isSuperset(of: expected) && active.contains(flagForKeyCode(binding.keyCode))
         if shouldBePressed && !isPressed {
             isPressed = true
             onPress?()
@@ -107,15 +129,91 @@ final class HotkeyMonitor {
         }
     }
 
+    private func handleMouse(_ event: NSEvent) {
+        guard let eventButton = mouseButton(for: event), eventButton == binding.mouseButton else { return }
+
+        switch event.type {
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            if !isPressed {
+                isPressed = true
+                onPress?()
+            }
+        case .leftMouseUp, .rightMouseUp, .otherMouseUp:
+            if isPressed {
+                isPressed = false
+                onRelease?()
+            }
+        default:
+            break
+        }
+    }
+
     private func capture(_ event: NSEvent) {
-        guard event.type == .keyDown || event.type == .flagsChanged else { return }
-        isCapturing = false
-        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        onCapture?(event.keyCode, modifiers.subtracting(flagForKeyCode(event.keyCode)))
+        switch event.type {
+        case .keyDown, .flagsChanged:
+            isCapturing = false
+            updateMouseMonitors()
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            onCapture?(
+                PushToTalkBinding(
+                    kind: .keyboard,
+                    keyCode: event.keyCode,
+                    modifiersRawValue: modifiers.subtracting(flagForKeyCode(event.keyCode)).rawValue,
+                    mouseButton: nil
+                )
+            )
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            guard let button = mouseButton(for: event) else { return }
+            isCapturing = false
+            updateMouseMonitors()
+            onCapture?(
+                PushToTalkBinding(
+                    kind: .mouse,
+                    keyCode: 0,
+                    modifiersRawValue: 0,
+                    mouseButton: button
+                )
+            )
+        default:
+            return
+        }
+    }
+
+    private func updateMouseMonitors() {
+        let shouldMonitorMouseGlobally = binding.kind == .mouse || isCapturing
+        let shouldMonitorMouseLocally = isCapturing
+
+        if shouldMonitorMouseGlobally {
+            if globalMouseMonitor == nil {
+                globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
+                    matching: mouseEventMask,
+                    handler: { [weak self] event in
+                        self?.handle(event)
+                    }
+                )
+            }
+        } else if let globalMouseMonitor {
+            NSEvent.removeMonitor(globalMouseMonitor)
+            self.globalMouseMonitor = nil
+        }
+
+        if shouldMonitorMouseLocally {
+            if localMouseMonitor == nil {
+                localMouseMonitor = NSEvent.addLocalMonitorForEvents(
+                    matching: mouseEventMask
+                ) { [weak self] event in
+                    self?.handle(event)
+                    return event
+                }
+            }
+        } else if let localMouseMonitor {
+            NSEvent.removeMonitor(localMouseMonitor)
+            self.localMouseMonitor = nil
+        }
     }
 
     private func modifiersMatch(_ flags: NSEvent.ModifierFlags) -> Bool {
-        flags.intersection(.deviceIndependentFlagsMask).isSuperset(of: modifierFlags)
+        flags.intersection(.deviceIndependentFlagsMask).isSuperset(of: binding.modifiers)
     }
 
     private func flagForKeyCode(_ keyCode: UInt16) -> NSEvent.ModifierFlags {
@@ -130,6 +228,19 @@ final class HotkeyMonitor {
             return .command
         default:
             return []
+        }
+    }
+
+    private func mouseButton(for event: NSEvent) -> Int? {
+        switch event.type {
+        case .leftMouseDown, .leftMouseUp:
+            return 0
+        case .rightMouseDown, .rightMouseUp:
+            return 1
+        case .otherMouseDown, .otherMouseUp:
+            return Int(event.buttonNumber)
+        default:
+            return nil
         }
     }
 }

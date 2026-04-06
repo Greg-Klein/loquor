@@ -11,9 +11,18 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 BACKEND_DIR="$RESOURCES_DIR/backend"
 PYTHON_DIR="$RESOURCES_DIR/python"
+ASSETS_DIR="$NATIVE_DIR/Assets"
+ICON_SOURCE="$ASSETS_DIR/LoquorIcon.png"
+ICONSET_DIR="$DIST_DIR/Loquor.iconset"
+ICNS_PATH="$RESOURCES_DIR/Loquor.icns"
 
 mkdir -p "$DIST_DIR"
 rm -rf "$APP_DIR"
+
+if [ ! -f "$ICON_SOURCE" ]; then
+  echo "Generating app icon source..."
+  swift "$ROOT_DIR/scripts/generate_app_icon.swift" "$ICON_SOURCE"
+fi
 
 echo "Building Swift app in release mode..."
 swift build -c release --package-path "$NATIVE_DIR"
@@ -25,6 +34,21 @@ mkdir -p "$MACOS_DIR" "$BACKEND_DIR" "$PYTHON_DIR"
 
 cp "$BIN_PATH" "$MACOS_DIR/Loquor"
 chmod +x "$MACOS_DIR/Loquor"
+
+echo "Packaging app icon..."
+rm -rf "$ICONSET_DIR"
+mkdir -p "$ICONSET_DIR"
+sips -z 16 16 "$ICON_SOURCE" --out "$ICONSET_DIR/icon_16x16.png" >/dev/null
+sips -z 32 32 "$ICON_SOURCE" --out "$ICONSET_DIR/icon_16x16@2x.png" >/dev/null
+sips -z 32 32 "$ICON_SOURCE" --out "$ICONSET_DIR/icon_32x32.png" >/dev/null
+sips -z 64 64 "$ICON_SOURCE" --out "$ICONSET_DIR/icon_32x32@2x.png" >/dev/null
+sips -z 128 128 "$ICON_SOURCE" --out "$ICONSET_DIR/icon_128x128.png" >/dev/null
+sips -z 256 256 "$ICON_SOURCE" --out "$ICONSET_DIR/icon_128x128@2x.png" >/dev/null
+sips -z 256 256 "$ICON_SOURCE" --out "$ICONSET_DIR/icon_256x256.png" >/dev/null
+sips -z 512 512 "$ICON_SOURCE" --out "$ICONSET_DIR/icon_256x256@2x.png" >/dev/null
+sips -z 512 512 "$ICON_SOURCE" --out "$ICONSET_DIR/icon_512x512.png" >/dev/null
+cp "$ICON_SOURCE" "$ICONSET_DIR/icon_512x512@2x.png"
+iconutil -c icns "$ICONSET_DIR" -o "$ICNS_PATH"
 
 cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -42,6 +66,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <key>CFBundleName</key>
   <string>Loquor</string>
   <key>CFBundleDisplayName</key>
+  <string>Loquor</string>
+  <key>CFBundleIconFile</key>
   <string>Loquor</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
