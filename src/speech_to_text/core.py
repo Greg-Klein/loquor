@@ -1,0 +1,276 @@
+from __future__ import annotations
+
+import tempfile
+import threading
+from pathlib import Path
+from typing import Callable
+
+import numpy as np
+import sounddevice as sd
+import soundfile as sf
+from pynput import keyboard
+
+
+KeyType = keyboard.Key | keyboard.KeyCode | None
+
+
+def list_input_devices() -> list[dict[str, object]]:
+    devices = []
+    for index, device in enumerate(sd.query_devices()):
+        max_input_channels = int(device["max_input_channels"])
+        if max_input_channels < 1:
+            continue
+        devices.append(
+            {
+                "id": index,
+                "name": str(device["name"]),
+                "channels": max_input_channels,
+                "default_samplerate": int(device["default_samplerate"]),
+            }
+        )
+    return devices
+
+
+def key_to_id(key: KeyType) -> str | None:
+    if key is None:
+        return None
+    if isinstance(key, keyboard.KeyCode):
+        if key.char:
+            return f"char:{key.char.lower()}"
+        if key.vk is not None:
+            return f"vk:{key.vk}"
+        return None
+    return f"key:{key.name}"
+
+
+def key_to_label(key_id: str) -> str:
+    if key_id.startswith("char:"):
+        return key_id.split(":", 1)[1].upper()
+    if key_id.startswith("vk:"):
+        return f"Key code {key_id.split(':', 1)[1]}"
+    if key_id.startswith("key:"):
+        raw = key_id.split(":", 1)[1]
+        return raw.replace("_", " ").title()
+    return key_id
+
+
+def normalize_key_id(key_id: str) -> str:
+    if key_id == "shift":
+        return "key:shift"
+    if key_id == "ctrl":
+        return "key:ctrl"
+    if key_id == "alt":
+        return "key:alt"
+    if key_id == "cmd":
+        return "key:cmd"
+    if key_id.startswith(("char:", "vk:", "key:")):
+        return key_id
+    return f"char:{key_id.lower()}"
+
+
+class TranscriptionService:
+    def __init__(self, model_name: str) -> None:
+        self.model_name = model_name
+        self._model = None
+        self._lock = threading.Lock()
+
+    def set_model(self, model_name: str) -> None:
+        with self._lock:
+            if self.model_name == model_name:
+                return
+            self.model_name = model_name
+            self._model = None
+
+    def _load_model(self):
+        from parakeet_mlx import from_pretrained
+
+        if self._model is None:
+            print(f"Loading model: {self.model_name}")
+            self._model = from_pretrained(self.model_name)
+        return self._model
+
+    def transcribe_audio(self, audio: np.ndarray, sample_rate: int, keep_audio: bool = False) -> str:
+        with self._lock:
+            model = self._load_model()
+            audio_path = save_audio(audio, sample_rate, keep_audio)
+            try:
+                print("Transcribing locally...")
+                result = model.transcribe(str(audio_path))
+                return result.text.strip()
+            finally:
+                if not keep_audio and audio_path.exists():
+                    audio_path.unlink()
+
+
+def record_audio(duration: float, sample_rate: int, device: int | None) -> np.ndarray:
+    frames = int(duration * sample_rate)
+    print(f"Recording {duration:.1f}s from microphone...")
+    audio = sd.rec(
+        frames,
+        samplerate=sample_rate,
+        channels=1,
+        dtype="float32",
+        device=device,
+    )
+    sd.wait()
+    print("Recording complete.")
+    return audio
+
+
+def save_audio(audio: np.ndarray, sample_rate: int, keep_audio: bool) -> Path:
+    if keep_audio:
+        output_path = Path.cwd() / "recording.wav"
+        sf.write(output_path, audio, sample_rate)
+        return output_path
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
+        output_path = Path(tmp_file.name)
+
+    sf.write(output_path, audio, sample_rate)
+    return output_path
+
+
+class PushToTalkRecorder:
+    def __init__(self, sample_rate: int, device: int | None) -> None:
+        self.sample_rate = sample_rate
+        self.device = device
+        self._lock = threading.Lock()
+        self._segments: list[np.ndarray] = []
+        self._recording = False
+        self._closed = False
+        self.stream = self._create_stream()
+
+    def _create_stream(self) -> sd.InputStream:
+        return sd.InputStream(
+            samplerate=self.sample_rate,
+            channels=1,
+            dtype="float32",
+            device=self.device,
+            callback=self._on_audio,
+        )
+
+    def _on_audio(self, indata, frames, time_info, status) -> None:
+        del frames, time_info
+        if status:
+            print(f"Audio status: {status}")
+        with self._lock:
+            if self._recording:
+                self._segments.append(indata.copy())
+
+    def start(self) -> None:
+        self.stream.start()
+
+    def reconfigure(self, sample_rate: int, device: int | None) -> None:
+        was_recording = self._recording
+        self.close()
+        self.sample_rate = sample_rate
+        self.device = device
+        self._segments = []
+        self._recording = False
+        self._closed = False
+        self.stream = self._create_stream()
+        self.start()
+        if was_recording:
+            self.begin_recording()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self.stream.stop()
+        self.stream.close()
+        self._closed = True
+
+    def begin_recording(self) -> None:
+        with self._lock:
+            if self._recording:
+                return
+            self._segments = []
+            self._recording = True
+        print("Recording... release the push-to-talk key to transcribe.")
+
+    def finish_recording(self) -> np.ndarray | None:
+        with self._lock:
+            if not self._recording:
+                return None
+            self._recording = False
+            segments = self._segments
+            self._segments = []
+
+        if not segments:
+            print("No audio captured.")
+            return None
+
+        print("Recording complete.")
+        return np.concatenate(segments, axis=0)
+
+
+class GlobalHotkeyManager:
+    def __init__(
+        self,
+        key_id: str,
+        on_hold_start: Callable[[], None],
+        on_hold_end: Callable[[], None],
+        on_key_captured: Callable[[str], None],
+    ) -> None:
+        self.key_id = normalize_key_id(key_id)
+        self.on_hold_start = on_hold_start
+        self.on_hold_end = on_hold_end
+        self.on_key_captured = on_key_captured
+        self._listener: keyboard.Listener | None = None
+        self._active_keys: set[str] = set()
+        self._capture_next_key = False
+        self._lock = threading.Lock()
+
+    def start(self) -> None:
+        self._listener = keyboard.Listener(on_press=self._on_press, on_release=self._on_release)
+        self._listener.start()
+
+    def stop(self) -> None:
+        if self._listener is not None:
+            self._listener.stop()
+            self._listener = None
+
+    def set_key(self, key_id: str) -> None:
+        with self._lock:
+            self.key_id = normalize_key_id(key_id)
+            self._active_keys.clear()
+
+    def capture_next_key(self) -> None:
+        with self._lock:
+            self._capture_next_key = True
+            self._active_keys.clear()
+
+    def _on_press(self, key: KeyType) -> None:
+        key_id = key_to_id(key)
+        if key_id is None:
+            return
+
+        with self._lock:
+            if self._capture_next_key:
+                self._capture_next_key = False
+                self.key_id = normalize_key_id(key_id)
+                self._active_keys.clear()
+                self.on_key_captured(self.key_id)
+                return
+
+            if key_id in self._active_keys:
+                return
+            self._active_keys.add(key_id)
+            should_start = key_id == self.key_id
+
+        if should_start:
+            self.on_hold_start()
+
+    def _on_release(self, key: KeyType) -> None:
+        key_id = key_to_id(key)
+        if key_id is None:
+            return
+
+        with self._lock:
+            was_active = key_id in self._active_keys
+            if was_active:
+                self._active_keys.discard(key_id)
+            should_stop = was_active and key_id == self.key_id
+
+        if should_stop:
+            self.on_hold_end()

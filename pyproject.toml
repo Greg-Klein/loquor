@@ -1,0 +1,25 @@
+[project]
+name = "speech-to-text"
+version = "0.1.0"
+description = "Starter local speech-to-text app using microphone input and Parakeet on Apple Silicon."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26",
+  "parakeet-mlx>=0.5.1",
+  "pynput>=1.7.7",
+  "rumps>=0.4.0",
+  "sounddevice>=0.5.1",
+  "soundfile>=0.12.1",
+]
+
+[project.scripts]
+speech-to-text = "speech_to_text.main:main"
+speech-to-text-app = "speech_to_text.macos_app:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

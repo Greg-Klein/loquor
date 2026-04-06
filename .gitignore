@@ -1,0 +1,8 @@
+.DS_Store
+.venv/
+build/
+dist/
+NativeMacApp/.build/
+src/*.egg-info/
+src/**/__pycache__/
+src/**/*.pyc
