@@ -35,6 +35,7 @@ Loquor peut demander :
 - 🖥️ Loquor tourne localement sur macOS.
 - 📍 L’app vit dans la barre de menu.
 - 📋 Si aucun champ texte n’a le focus, le texte reste disponible via le presse-papiers.
+- 📄 Le projet est distribué sous licence MIT.
 
 ## 🛠️ Développement
 
