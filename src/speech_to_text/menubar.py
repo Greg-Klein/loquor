@@ -6,12 +6,11 @@ import rumps
 
 from speech_to_text.config import ConfigStore
 from speech_to_text.core import (
-    GlobalHotkeyManager,
     PushToTalkRecorder,
     TranscriptionService,
-    key_to_label,
     list_input_devices,
 )
+from speech_to_text.legacy_hotkeys import GlobalHotkeyManager, key_to_label
 from speech_to_text.macos import copy_and_paste
 
 

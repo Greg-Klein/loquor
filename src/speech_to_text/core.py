@@ -8,10 +8,6 @@ from typing import Callable
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
-from pynput import keyboard
-
-
-KeyType = keyboard.Key | keyboard.KeyCode | None
 
 
 def list_input_devices() -> list[dict[str, object]]:
@@ -56,43 +52,6 @@ def input_device_info(device: int | None) -> dict[str, object]:
     if query_target is None:
         return {}
     return dict(sd.query_devices(query_target))
-
-
-def key_to_id(key: KeyType) -> str | None:
-    if key is None:
-        return None
-    if isinstance(key, keyboard.KeyCode):
-        if key.char:
-            return f"char:{key.char.lower()}"
-        if key.vk is not None:
-            return f"vk:{key.vk}"
-        return None
-    return f"key:{key.name}"
-
-
-def key_to_label(key_id: str) -> str:
-    if key_id.startswith("char:"):
-        return key_id.split(":", 1)[1].upper()
-    if key_id.startswith("vk:"):
-        return f"Key code {key_id.split(':', 1)[1]}"
-    if key_id.startswith("key:"):
-        raw = key_id.split(":", 1)[1]
-        return raw.replace("_", " ").title()
-    return key_id
-
-
-def normalize_key_id(key_id: str) -> str:
-    if key_id == "shift":
-        return "key:shift"
-    if key_id == "ctrl":
-        return "key:ctrl"
-    if key_id == "alt":
-        return "key:alt"
-    if key_id == "cmd":
-        return "key:cmd"
-    if key_id.startswith(("char:", "vk:", "key:")):
-        return key_id
-    return f"char:{key_id.lower()}"
 
 
 class TranscriptionService:
@@ -291,8 +250,6 @@ class PushToTalkRecorder:
     def __init__(self, sample_rate: int, device: int | None) -> None:
         self.sample_rate = sample_rate
         self.device = device
-        self._resolved_device: int | None = None
-        self._active_sample_rate = sample_rate
         self._lock = threading.Lock()
         self._segments: list[np.ndarray] = []
         self._recording = False
@@ -300,34 +257,13 @@ class PushToTalkRecorder:
         self.stream: sd.InputStream | None = None
 
     def _create_stream(self) -> sd.InputStream:
-        self._resolved_device = self.device if self.device is not None else default_input_device()
-        requested_sample_rate = self.sample_rate
-
-        try:
-            stream = sd.InputStream(
-                samplerate=requested_sample_rate,
-                channels=1,
-                dtype="float32",
-                device=self._resolved_device,
-                callback=self._on_audio,
-            )
-            self._active_sample_rate = requested_sample_rate
-            return stream
-        except Exception:
-            device_info = input_device_info(self._resolved_device)
-            fallback_sample_rate = int(device_info.get("default_samplerate", requested_sample_rate))
-            if fallback_sample_rate == requested_sample_rate:
-                raise
-
-            stream = sd.InputStream(
-                samplerate=fallback_sample_rate,
-                channels=1,
-                dtype="float32",
-                device=self._resolved_device,
-                callback=self._on_audio,
-            )
-            self._active_sample_rate = fallback_sample_rate
-            return stream
+        return sd.InputStream(
+            samplerate=self.sample_rate,
+            channels=1,
+            dtype="float32",
+            device=self.device,
+            callback=self._on_audio,
+        )
 
     def _on_audio(self, indata, frames, time_info, status) -> None:
         del frames, time_info
@@ -348,15 +284,12 @@ class PushToTalkRecorder:
         self.stream.stop()
         self.stream.close()
         self.stream = None
-        self._resolved_device = None
-        self._active_sample_rate = self.sample_rate
 
     def reconfigure(self, sample_rate: int, device: int | None) -> None:
         was_recording = self._recording
         self.close()
         self.sample_rate = sample_rate
         self.device = device
-        self._resolved_device = None
         self._segments = []
         self._recording = False
         self._closed = False
@@ -375,21 +308,18 @@ class PushToTalkRecorder:
                 return
             if self._closed:
                 raise RuntimeError("Recorder is closed.")
-            if self.device is None:
-                self._resolved_device = default_input_device()
             self._segments = []
             self._ensure_stream_started()
             self._recording = True
         print("Recording... release the push-to-talk key to transcribe.")
 
-    def finish_recording(self) -> tuple[np.ndarray, int] | None:
+    def finish_recording(self) -> np.ndarray | None:
         with self._lock:
             if not self._recording:
                 return None
             self._recording = False
             segments = self._segments
             self._segments = []
-            sample_rate = self._active_sample_rate
             self._stop_stream()
 
         if not segments:
@@ -397,76 +327,4 @@ class PushToTalkRecorder:
             return None
 
         print("Recording complete.")
-        return np.concatenate(segments, axis=0), sample_rate
-
-
-class GlobalHotkeyManager:
-    def __init__(
-        self,
-        key_id: str,
-        on_hold_start: Callable[[], None],
-        on_hold_end: Callable[[], None],
-        on_key_captured: Callable[[str], None],
-    ) -> None:
-        self.key_id = normalize_key_id(key_id)
-        self.on_hold_start = on_hold_start
-        self.on_hold_end = on_hold_end
-        self.on_key_captured = on_key_captured
-        self._listener: keyboard.Listener | None = None
-        self._active_keys: set[str] = set()
-        self._capture_next_key = False
-        self._lock = threading.Lock()
-
-    def start(self) -> None:
-        self._listener = keyboard.Listener(on_press=self._on_press, on_release=self._on_release)
-        self._listener.start()
-
-    def stop(self) -> None:
-        if self._listener is not None:
-            self._listener.stop()
-            self._listener = None
-
-    def set_key(self, key_id: str) -> None:
-        with self._lock:
-            self.key_id = normalize_key_id(key_id)
-            self._active_keys.clear()
-
-    def capture_next_key(self) -> None:
-        with self._lock:
-            self._capture_next_key = True
-            self._active_keys.clear()
-
-    def _on_press(self, key: KeyType) -> None:
-        key_id = key_to_id(key)
-        if key_id is None:
-            return
-
-        with self._lock:
-            if self._capture_next_key:
-                self._capture_next_key = False
-                self.key_id = normalize_key_id(key_id)
-                self._active_keys.clear()
-                self.on_key_captured(self.key_id)
-                return
-
-            if key_id in self._active_keys:
-                return
-            self._active_keys.add(key_id)
-            should_start = key_id == self.key_id
-
-        if should_start:
-            self.on_hold_start()
-
-    def _on_release(self, key: KeyType) -> None:
-        key_id = key_to_id(key)
-        if key_id is None:
-            return
-
-        with self._lock:
-            was_active = key_id in self._active_keys
-            if was_active:
-                self._active_keys.discard(key_id)
-            should_stop = was_active and key_id == self.key_id
-
-        if should_stop:
-            self.on_hold_end()
+        return np.concatenate(segments, axis=0)

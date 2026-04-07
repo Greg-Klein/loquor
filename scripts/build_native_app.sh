@@ -9,8 +9,7 @@ APP_DIR="$DIST_DIR/$APP_NAME"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
-BACKEND_DIR="$RESOURCES_DIR/backend"
-PYTHON_DIR="$RESOURCES_DIR/python"
+BACKEND_RUNTIME_DIR="$RESOURCES_DIR/backend-runtime"
 ASSETS_DIR="$NATIVE_DIR/Assets"
 ICON_SOURCE="$ASSETS_DIR/LoquorIcon.png"
 ICONSET_DIR="$DIST_DIR/Loquor.iconset"
@@ -29,8 +28,11 @@ swift build -c release --package-path "$NATIVE_DIR"
 
 BIN_PATH="$(swift build -c release --package-path "$NATIVE_DIR" --show-bin-path)/SpeechToTextNative"
 
+echo "Building standalone backend runtime..."
+"$ROOT_DIR/scripts/build_backend_runtime.sh"
+
 echo "Creating app bundle..."
-mkdir -p "$MACOS_DIR" "$BACKEND_DIR" "$PYTHON_DIR"
+mkdir -p "$MACOS_DIR" "$BACKEND_RUNTIME_DIR"
 
 cp "$BIN_PATH" "$MACOS_DIR/Loquor"
 chmod +x "$MACOS_DIR/Loquor"
@@ -86,24 +88,10 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 PLIST
 
 echo "Copying Python backend..."
-mkdir -p "$BACKEND_DIR/src"
 rsync -a \
   --exclude '__pycache__' \
   --exclude '*.pyc' \
-  "$ROOT_DIR/src/speech_to_text" \
-  "$BACKEND_DIR/src/"
-
-echo "Copying Python runtime..."
-rsync -a \
-  --exclude 'share' \
-  --exclude 'man' \
-  --exclude '__pycache__' \
-  --exclude '*.pyc' \
-  --exclude 'Activate.ps1' \
-  --exclude 'activate' \
-  --exclude 'activate.csh' \
-  --exclude 'activate.fish' \
-  "$ROOT_DIR/.venv/" \
-  "$PYTHON_DIR/"
+  "$ROOT_DIR/dist/loquor-backend/" \
+  "$BACKEND_RUNTIME_DIR/"
 
 echo "Bundle created at: $APP_DIR"

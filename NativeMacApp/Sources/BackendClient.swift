@@ -36,12 +36,12 @@ final class BackendClient: @unchecked Sendable {
 
     func start() throws {
         let runtime = Self.runtimeConfiguration()
-        let pythonPath = runtime.pythonPath
-        guard FileManager.default.fileExists(atPath: pythonPath.path) else {
-            throw BackendError.pythonNotFound(pythonPath.path)
+        let executablePath = runtime.executablePath
+        guard FileManager.default.fileExists(atPath: executablePath.path) else {
+            throw BackendError.pythonNotFound(executablePath.path)
         }
 
-        process.executableURL = pythonPath
+        process.executableURL = executablePath
         process.arguments = runtime.arguments
         process.currentDirectoryURL = runtime.workingDirectory
         process.environment = runtime.environment
@@ -197,16 +197,13 @@ final class BackendClient: @unchecked Sendable {
     private static func runtimeConfiguration() -> RuntimeConfiguration {
         let bundleResources = Bundle.main.resourceURL
         if let bundleResources {
-            let bundledPython = bundleResources.appending(path: "python/bin/python")
-            let bundledBackendRoot = bundleResources.appending(path: "backend")
-            if FileManager.default.fileExists(atPath: bundledPython.path) {
-                var environment = ProcessInfo.processInfo.environment
-                environment = enrichEnvironment(environment)
-                let backendSrc = bundledBackendRoot.appending(path: "src").path
-                environment["PYTHONPATH"] = backendSrc
+            let bundledBackendRoot = bundleResources.appending(path: "backend-runtime")
+            let bundledBackendExecutable = bundledBackendRoot.appending(path: "loquor-backend")
+            if FileManager.default.fileExists(atPath: bundledBackendExecutable.path) {
+                let environment = enrichEnvironment(ProcessInfo.processInfo.environment)
                 return RuntimeConfiguration(
-                    pythonPath: bundledPython,
-                    arguments: ["-m", "speech_to_text.backend_service"],
+                    executablePath: bundledBackendExecutable,
+                    arguments: [],
                     workingDirectory: bundledBackendRoot,
                     environment: environment
                 )
@@ -218,7 +215,7 @@ final class BackendClient: @unchecked Sendable {
         environment = enrichEnvironment(environment)
         environment["PYTHONPATH"] = repoRoot.appending(path: "src").path
         return RuntimeConfiguration(
-            pythonPath: repoRoot.appending(path: ".venv/bin/python"),
+            executablePath: repoRoot.appending(path: ".venv/bin/python"),
             arguments: ["-m", "speech_to_text.backend_service"],
             workingDirectory: repoRoot,
             environment: environment
@@ -260,7 +257,7 @@ final class BackendClient: @unchecked Sendable {
 }
 
 private struct RuntimeConfiguration {
-    let pythonPath: URL
+    let executablePath: URL
     let arguments: [String]
     let workingDirectory: URL
     let environment: [String: String]
